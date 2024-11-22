@@ -4,3 +4,4 @@ tensorflow
 numpy
 pydantic
 scikit-learn
+python-multipart==0.0.5

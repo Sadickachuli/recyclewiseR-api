@@ -8,7 +8,6 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.preprocessing import image
 from sklearn.model_selection import train_test_split
 import numpy as np
-import os
 import uvicorn
 from typing import Dict, List
 
