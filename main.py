@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -14,7 +16,7 @@ from typing import Dict, List
 app = FastAPI()
 
 # Model and class configurations
-MODEL_PATH = "adam_cnn.keras"  # Ensure the model is in the same directory or provide full path
+MODEL_PATH = "adam_cnn.keras" 
 CLASS_LABELS = {0: 'cardboard', 1: 'glass', 2: 'metal', 3: 'paper', 4: 'plastic', 5: 'trash'}
 RECYCLABLE_CLASSES = {'cardboard', 'glass', 'metal', 'paper', 'plastic'}
 model = None
