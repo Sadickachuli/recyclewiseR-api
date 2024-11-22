@@ -1,21 +1,22 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+# Force CPU-only mode by disabling CUDA
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Prevent TensorFlow from using GPU
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.preprocessing import image
-from sklearn.model_selection import train_test_split
 import numpy as np
 import uvicorn
-from typing import Dict, List
 
 # Initialize FastAPI app
 app = FastAPI()
 
 # Model and class configurations
-MODEL_PATH = "adam_cnn.keras" 
+MODEL_PATH = "adam_cnn.keras"
 CLASS_LABELS = {0: 'cardboard', 1: 'glass', 2: 'metal', 3: 'paper', 4: 'plastic', 5: 'trash'}
 RECYCLABLE_CLASSES = {'cardboard', 'glass', 'metal', 'paper', 'plastic'}
 model = None
@@ -99,3 +100,4 @@ def root():
 
 # Load the model on server start
 load_model_file()
+
