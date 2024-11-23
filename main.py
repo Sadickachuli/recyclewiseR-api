@@ -1,4 +1,5 @@
 import os
+import requests
 
 # Force CPU-only mode by disabling CUDA
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Prevent TensorFlow from using GPU
@@ -25,6 +26,27 @@ RECYCLABLE_CLASSES = {'cardboard', 'glass', 'metal', 'paper', 'plastic'}
 interpreter = None
 input_details = None
 output_details = None
+
+# Google Drive File URL
+GOOGLE_DRIVE_FILE_URL = "https://drive.google.com/uc?export=download&id=18rjLTCpmQtjxIrU-qOEF6c9-SQ0UNW6M"
+
+# Function to download the model file
+def download_model_file(url, save_path):
+    try:
+        print(f"Downloading model from {url}...")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        with open(save_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"Model downloaded and saved to {save_path}")
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        raise
+
+# Ensure the model file is available
+if not os.path.exists(KERAS_MODEL_PATH):
+    download_model_file(GOOGLE_DRIVE_FILE_URL, KERAS_MODEL_PATH)
 
 # Load TensorFlow Lite model
 def load_tflite_model():
@@ -81,48 +103,6 @@ async def predict_image(file: UploadFile = File(...)):
         os.remove(temp_file_path)
 
         return {"predicted_label": predicted_label, "category": category}
-
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"message": str(e)})
-
-# Retrain the model
-@app.post("/retrain/")
-async def retrain_model(dataset_dir: str):
-    try:
-        # Check dataset directory exists
-        if not os.path.exists(dataset_dir):
-            raise HTTPException(status_code=404, detail="Dataset directory not found.")
-
-        # Load the original Keras model
-        if not os.path.exists(KERAS_MODEL_PATH):
-            raise HTTPException(status_code=404, detail="Original Keras model not found.")
-        model = load_model(KERAS_MODEL_PATH)
-
-        # Check the model's input shape and ensure it aligns with the dataset images
-        target_size = (150, 150)  # Adjust to the target size for your images
-        print(f"Model input shape: {model.input_shape}, target size: {target_size}")
-
-        # Prepare data generators
-        datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
-        train_gen = datagen.flow_from_directory(dataset_dir, target_size=target_size, batch_size=32, subset='training')
-        val_gen = datagen.flow_from_directory(dataset_dir, target_size=target_size, batch_size=32, subset='validation')
-
-        # Retrain the model
-        model.fit(train_gen, validation_data=val_gen, epochs=5)
-
-        # Save retrained Keras model
-        model.save(KERAS_MODEL_PATH)
-
-        # Convert retrained model to TensorFlow Lite
-        from tensorflow.lite import TFLiteConverter
-        converter = TFLiteConverter.from_keras_model(model)
-        tflite_model = converter.convert()
-
-        # Save the updated TensorFlow Lite model
-        with open(MODEL_PATH, "wb") as f:
-            f.write(tflite_model)
-
-        return {"message": "Model retrained and converted to TensorFlow Lite successfully."}
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": str(e)})
