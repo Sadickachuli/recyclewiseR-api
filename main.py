@@ -12,6 +12,7 @@ from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import numpy as np
 import uvicorn
+from PIL import Image
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -40,10 +41,11 @@ def load_tflite_model():
 # Preprocess uploaded image
 def preprocess_image(img_path, target_size):
     try:
-        img = load_img(img_path, target_size=target_size)  # Use load_img
-        img_array = img_to_array(img)  # Use img_to_array
-        img_array = img_array / 255.0  # Normalize
-        return np.expand_dims(img_array, axis=0)
+        # Ensure that the image is loaded in the correct format with Pillow (PIL)
+        img = load_img(img_path, target_size=target_size)  # Use load_img from Keras
+        img_array = img_to_array(img)  # Convert image to array
+        img_array = img_array / 255.0  # Normalize the image to the range [0, 1]
+        return np.expand_dims(img_array, axis=0)  # Add batch dimension for prediction
     except Exception as e:
         raise ValueError(f"Image preprocessing failed: {e}")
 
