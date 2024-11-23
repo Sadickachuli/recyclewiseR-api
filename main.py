@@ -6,9 +6,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.preprocessing import image
+from tensorflow import lite
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
 import numpy as np
 import uvicorn
 
@@ -16,25 +15,30 @@ import uvicorn
 app = FastAPI()
 
 # Model and class configurations
-MODEL_PATH = "adam_cnn.keras"
+MODEL_PATH = "model.tflite"  # Use TensorFlow Lite model
 CLASS_LABELS = {0: 'cardboard', 1: 'glass', 2: 'metal', 3: 'paper', 4: 'plastic', 5: 'trash'}
 RECYCLABLE_CLASSES = {'cardboard', 'glass', 'metal', 'paper', 'plastic'}
-model = None
+interpreter = None
+input_details = None
+output_details = None
 
-# Load model
-def load_model_file():
-    global model
+# Load TensorFlow Lite model
+def load_tflite_model():
+    global interpreter, input_details, output_details
     try:
-        model = load_model(MODEL_PATH)
-        print("Model loaded successfully.")
+        interpreter = lite.Interpreter(model_path=MODEL_PATH)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        print("TFLite model loaded successfully.")
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"Error loading TensorFlow Lite model: {e}")
 
 # Preprocess uploaded image
 def preprocess_image(img_path, target_size):
     try:
-        img = image.load_img(img_path, target_size=target_size)
-        img_array = image.img_to_array(img)
+        img = load_img(img_path, target_size=target_size)  # Use load_img
+        img_array = img_to_array(img)  # Use img_to_array
         img_array = img_array / 255.0  # Normalize
         return np.expand_dims(img_array, axis=0)
     except Exception as e:
@@ -43,7 +47,7 @@ def preprocess_image(img_path, target_size):
 # Predict the class of an image
 @app.post("/predict/")
 async def predict_image(file: UploadFile = File(...)):
-    if model is None:
+    if interpreter is None:
         return JSONResponse(status_code=500, content={"message": "Model is not loaded."})
 
     try:
@@ -53,11 +57,17 @@ async def predict_image(file: UploadFile = File(...)):
             temp_file.write(await file.read())
 
         # Preprocess the image
-        target_size = model.input_shape[1:3]
+        target_size = input_details[0]['shape'][1:3]  # Height and width from model input shape
         img_array = preprocess_image(temp_file_path, target_size)
 
-        # Predict
-        predictions = model.predict(img_array)
+        # Set input tensor
+        interpreter.set_tensor(input_details[0]['index'], img_array.astype(input_details[0]['dtype']))
+
+        # Run inference
+        interpreter.invoke()
+
+        # Get the output tensor
+        predictions = interpreter.get_tensor(output_details[0]['index'])
         predicted_class_index = np.argmax(predictions)
         predicted_label = CLASS_LABELS[predicted_class_index]
         category = "Recyclable" if predicted_label in RECYCLABLE_CLASSES else "Non-Recyclable"
@@ -70,34 +80,10 @@ async def predict_image(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": str(e)})
 
-# Retrain the model
-@app.post("/retrain/")
-async def retrain_model(dataset_dir: str):
-    try:
-        if not os.path.exists(dataset_dir):
-            raise HTTPException(status_code=404, detail="Dataset directory not found.")
-
-        # Prepare data generators
-        datagen = ImageDataGenerator(rescale=1.0/255, validation_split=0.2)
-        train_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='training')
-        val_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='validation')
-
-        # Retrain model
-        global model
-        model.fit(train_gen, validation_data=val_gen, epochs=5)
-
-        # Save retrained model
-        model.save(MODEL_PATH)
-        return {"message": "Model retrained and saved successfully."}
-
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"message": str(e)})
-
 # Health check
 @app.get("/")
 def root():
     return {"message": "FastAPI server is running."}
 
-# Load the model on server start
-load_model_file()
-
+# Load the TensorFlow Lite model on server start
+load_tflite_model()
