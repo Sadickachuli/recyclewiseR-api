@@ -1,15 +1,10 @@
 import os
-
-# Force CPU-only mode by disabling CUDA
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Prevent TensorFlow from using GPU
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
-
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from tensorflow import lite
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from tensorflow.keras.preprocessing.image import load_img, img_to_array, ImageDataGenerator
+from tensorflow.keras.models import load_model
 import numpy as np
-import uvicorn
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -23,10 +18,10 @@ input_details = None
 output_details = None
 
 # Load TensorFlow Lite model
-def load_tflite_model():
+def load_tflite_model(model_path=MODEL_PATH):
     global interpreter, input_details, output_details
     try:
-        interpreter = lite.Interpreter(model_path=MODEL_PATH)
+        interpreter = lite.Interpreter(model_path=model_path)
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
@@ -76,6 +71,43 @@ async def predict_image(file: UploadFile = File(...)):
         os.remove(temp_file_path)
 
         return {"predicted_label": predicted_label, "category": category}
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"message": str(e)})
+
+# Retrain the model
+@app.post("/retrain/")
+async def retrain_model(dataset_dir: str):
+    try:
+        if not os.path.exists(dataset_dir):
+            raise HTTPException(status_code=404, detail="Dataset directory not found.")
+
+        # Load original model
+        model = load_model("original_model.keras")
+
+        # Prepare data generators
+        datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
+        train_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='training')
+        val_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='validation')
+
+        # Retrain the model
+        model.fit(train_gen, validation_data=val_gen, epochs=5)
+
+        # Save retrained Keras model
+        model.save("updated_model.keras")
+
+        # Convert to TensorFlow Lite
+        from tensorflow.lite import TFLiteConverter
+        converter = TFLiteConverter.from_keras_model(model)
+        tflite_model = converter.convert()
+
+        with open("updated_model.tflite", "wb") as f:
+            f.write(tflite_model)
+
+        # Reload the updated model
+        load_tflite_model("updated_model.tflite")
+
+        return {"message": "Model retrained and converted to TensorFlow Lite successfully."}
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": str(e)})
