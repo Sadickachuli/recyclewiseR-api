@@ -1,16 +1,24 @@
 import os
+
+# Force CPU-only mode by disabling CUDA
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Prevent TensorFlow from using GPU
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from tensorflow import lite
-from tensorflow.keras.preprocessing.image import load_img, img_to_array, ImageDataGenerator
 from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import numpy as np
+import uvicorn
 
 # Initialize FastAPI app
 app = FastAPI()
 
 # Model and class configurations
-MODEL_PATH = "model.tflite"  # Use TensorFlow Lite model
+MODEL_PATH = "model.tflite"  # TensorFlow Lite model path
+KERAS_MODEL_PATH = "adam_cnn.keras"  # Original Keras model path
 CLASS_LABELS = {0: 'cardboard', 1: 'glass', 2: 'metal', 3: 'paper', 4: 'plastic', 5: 'trash'}
 RECYCLABLE_CLASSES = {'cardboard', 'glass', 'metal', 'paper', 'plastic'}
 interpreter = None
@@ -18,10 +26,10 @@ input_details = None
 output_details = None
 
 # Load TensorFlow Lite model
-def load_tflite_model(model_path=MODEL_PATH):
+def load_tflite_model():
     global interpreter, input_details, output_details
     try:
-        interpreter = lite.Interpreter(model_path=model_path)
+        interpreter = lite.Interpreter(model_path=MODEL_PATH)
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
@@ -40,7 +48,7 @@ def preprocess_image(img_path, target_size):
         raise ValueError(f"Image preprocessing failed: {e}")
 
 # Predict the class of an image
-@app.post("/predict/")
+@app.post("/predict/") 
 async def predict_image(file: UploadFile = File(...)):
     if interpreter is None:
         return JSONResponse(status_code=500, content={"message": "Model is not loaded."})
@@ -79,33 +87,38 @@ async def predict_image(file: UploadFile = File(...)):
 @app.post("/retrain/")
 async def retrain_model(dataset_dir: str):
     try:
+        # Check dataset directory exists
         if not os.path.exists(dataset_dir):
             raise HTTPException(status_code=404, detail="Dataset directory not found.")
 
-        # Load original model
-        model = load_model("original_model.keras")
+        # Load the original Keras model
+        if not os.path.exists(KERAS_MODEL_PATH):
+            raise HTTPException(status_code=404, detail="Original Keras model not found.")
+        model = load_model(KERAS_MODEL_PATH)
+
+        # Check the model's input shape and ensure it aligns with the dataset images
+        target_size = (150, 150)  # Adjust to the target size for your images
+        print(f"Model input shape: {model.input_shape}, target size: {target_size}")
 
         # Prepare data generators
         datagen = ImageDataGenerator(rescale=1.0 / 255, validation_split=0.2)
-        train_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='training')
-        val_gen = datagen.flow_from_directory(dataset_dir, target_size=(150, 150), batch_size=32, subset='validation')
+        train_gen = datagen.flow_from_directory(dataset_dir, target_size=target_size, batch_size=32, subset='training')
+        val_gen = datagen.flow_from_directory(dataset_dir, target_size=target_size, batch_size=32, subset='validation')
 
         # Retrain the model
         model.fit(train_gen, validation_data=val_gen, epochs=5)
 
         # Save retrained Keras model
-        model.save("updated_model.keras")
+        model.save(KERAS_MODEL_PATH)
 
-        # Convert to TensorFlow Lite
+        # Convert retrained model to TensorFlow Lite
         from tensorflow.lite import TFLiteConverter
         converter = TFLiteConverter.from_keras_model(model)
         tflite_model = converter.convert()
 
-        with open("updated_model.tflite", "wb") as f:
+        # Save the updated TensorFlow Lite model
+        with open(MODEL_PATH, "wb") as f:
             f.write(tflite_model)
-
-        # Reload the updated model
-        load_tflite_model("updated_model.tflite")
 
         return {"message": "Model retrained and converted to TensorFlow Lite successfully."}
 
